@@ -1,6 +1,6 @@
 
 import { NextResponse } from 'next/server';
-const { analyzeDiagnosticResults } = require('@/lib/prompts/analyze-results');
+import { analyzeDiagnosticResults } from '@/lib/prompts/analyze-results';
 import https from 'https';
 
 /**
@@ -8,6 +8,8 @@ import https from 'https';
  */
 async function verifyLicense(licenseKey: string): Promise<{ success: boolean; message?: string }> {
   const GUMROAD_PRODUCT_ID = process.env.GUMROAD_PRODUCT_ID;
+  // If no product ID is set, we assume it's in development mode or not yet configured.
+  // In a real production environment, you should always have this set.
   if (!GUMROAD_PRODUCT_ID) return { success: true }; 
 
   return new Promise((resolve) => {
@@ -78,7 +80,7 @@ export async function POST(request: Request) {
     const { assessmentTitle, questions, responses, licenseKey } = body;
 
     if (!licenseKey) {
-        return NextResponse.json({ success: false, message: "License key missing." }, { status: 401 });
+        return NextResponse.json({ success: false, message: "License key missing. Please go to Settings in the sidebar." }, { status: 401 });
     }
 
     const licenseStatus = await verifyLicense(licenseKey);
@@ -93,24 +95,26 @@ export async function POST(request: Request) {
     const modelName = process.env.GEMINI_MODEL_NAME || 'gemini-1.5-flash-latest';
 
     if (!apiKey) {
-      return NextResponse.json({ success: false, message: "Server configuration error." }, { status: 500 });
+      return NextResponse.json({ success: false, message: "Server API Key configuration error." }, { status: 500 });
     }
 
     if (!questions || !responses || responses.length === 0) {
       return NextResponse.json({ success: false, message: "No responses found in this form." }, { status: 400 });
     }
 
+    // Format Google Form items into Quinfer Question structure
     const formattedQuestions = questions.map((q: any) => ({
       id: q.id,
       question: q.title,
-      type: 'mcq',
+      type: q.type === "MULTIPLE_CHOICE" ? 'mcq' : 'shortAnswer',
       options: q.choices || [],
-      correctOptionIndex: 0,
+      correctOptionIndex: 0, // Google Forms doesn't easily expose the answer key to scripts, we focus on error patterns
       marks: 1,
       topic: 'General',
       skill: 'General'
     }));
 
+    // Format Google Form responses into Quinfer StudentResponse structure
     const formattedResponses = responses.map((r: any) => ({
       studentName: r.studentName || 'Anonymous',
       submittedAt: new Date(),
@@ -125,6 +129,7 @@ export async function POST(request: Request) {
     const analysisResult = await analyzeDiagnosticResults({
       apiKey,
       modelName,
+      assessmentId: 'google-forms-session',
       assessmentTitle: assessmentTitle || "Google Form Assessment",
       questions: formattedQuestions,
       studentResponses: formattedResponses,
